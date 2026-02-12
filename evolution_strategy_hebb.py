@@ -328,6 +328,8 @@ class EvolutionStrategyHebb(object):
         pool = mp.Pool(self.num_threads) if self.num_threads > 1 else None
         
         generations_rewards = []
+        coefficients_history = []
+        generations_rewards_std = []
 
         for iteration in range(iterations):                                                                         # Algorithm 2. Salimans, 2017: https://arxiv.org/abs/1703.03864
 
@@ -344,11 +346,13 @@ class EvolutionStrategyHebb(object):
                 population = self._get_population()                                                                 # Sample normal noise:         Step 5
                 rewards = self._get_rewards(pool, population)                                                       # Compute population fitness:  Step 6
                 self._update_coeffs(rewards, population)                                                            # Update coefficients:         Steps 8->12
-                
+            
+            coefficients = self.get_coeffs()
                 
             # Print fitness and save Hebbian coefficients and/or Coevolved / CNNs parameters
             if (iteration + 1) % print_step == 0:
                 rew_ = rewards.mean()
+                rew_std = rewards.std()
                 print('iter %4i | reward: %3i |  update_factor: %f  lr: %f | sum_coeffs: %i sum_abs_coeffs: %4i' % (iteration + 1, rew_ , self.update_factor, self.learning_rate, int(np.sum(self.coeffs)), int(np.sum(abs(self.coeffs)))), flush=True)
                 
                 if rew_ > 100:
@@ -359,8 +363,12 @@ class EvolutionStrategyHebb(object):
                         torch.save(self.get_coevolved_parameters(),  path + "/"+ id_ + '/HEBcoeffs__' + self.environment + "__rew_" + str(int(rew_)) + '__' + self.hebb_rule + "__init_" + str(self.init_weights) + "__pop_" + str(self.POPULATION_SIZE) + '__CNN_parameters' + "__{}.dat".format(iteration))
                         
                 generations_rewards.append(rew_)
+                generations_rewards_std.append(rew_std)
+                coefficients_history.append(coefficients)
                 np.save(path + "/"+ id_ + '/Fitness_values_' + id_ + '_' + self.environment + '.npy', np.array(generations_rewards))
-       
+                np.save(path + "/"+ id_ + '/Fitness_std_values_' + id_ + '_' + self.environment + '.npy', np.array(generations_rewards_std))
+                np.save(path + "/"+ id_ + '/Hebbian_coefficients_history_' + id_ + '_' + self.environment + '.npy', np.array(coefficients_history))
+
         if pool is not None:
             pool.close()
             pool.join()
