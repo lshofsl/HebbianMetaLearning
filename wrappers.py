@@ -50,3 +50,39 @@ class FireEpisodicLifeEnv(gym.Wrapper):
         if done:
             self.env.reset(**kwargs)
         return obs
+
+
+class ActionPerturbationWrapper(gym.Wrapper):
+    def __init__(self, env, A, B, mode="hold_last",
+                 force_action=0, p=0.2, mask_dict=None):
+        super().__init__(env)
+        self.A, self.B = int(A), int(B)
+        self.mode = mode
+        self.force_action = force_action
+        self.p = p
+        self.mask_dict = mask_dict or {}
+        self.t = 0
+        self.last_action = None
+
+    def reset(self, **kwargs):
+        self.t = 0
+        self.last_action = None
+        return self.env.reset(**kwargs)
+
+    def step(self, action):
+        if self.A <= self.t < self.B:
+            if self.mode == "hold_last":
+                action = self.last_action if self.last_action is not None else action
+            elif self.mode == "force":
+                action = self.force_action
+            elif self.mode == "flip_prob":
+                # only valid for binary action spaces
+                if np.random.rand() < self.p:
+                    action = 1 - int(action)
+            elif self.mode == "mask":
+                action = self.mask_dict.get(int(action), int(action))
+
+        obs, rew, done, info = self.env.step(action)
+        self.last_action = int(action) if hasattr(action, "__int__") else action
+        self.t += 1
+        return obs, rew, done, info

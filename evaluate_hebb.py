@@ -1,3 +1,4 @@
+from html import parser
 import gym
 import torch
 
@@ -12,11 +13,13 @@ import sys
 from hebbian_weights_update import *
 from policies import MLP_heb, CNN_heb
 from wrappers import ScaledFloatFrame
+from wrappers import ActionPerturbationWrapper
+from gym.wrappers import RecordVideo
 
 gym.logger.set_level(40)
 
 
-def evaluate_hebb(hebb_rule : str, environment : str, init_weights = 'uni', render = True , *evolved_parameters: [np.array]) -> None:
+def evaluate_hebb(hebb_rule : str, environment : str, init_weights = 'uni', obs_noise = False, render = True , *evolved_parameters: [np.array]) -> None:
     """
     Copypasta function from fitness_functions::fitness_hebb
     It adds rendering of the environment and prints the cumulative episodic reward
@@ -51,11 +54,22 @@ def evaluate_hebb(hebb_rule : str, environment : str, init_weights = 'uni', rend
     # Intial weights co-evolution flag:
     coevolve_init = True if init_weights == 'coevolve' else False
 
+    # Reset random seeds to ensure reproducibility and avoid state leakage between runs
+    np.random.seed()
+    torch.manual_seed(int(np.random.randint(0, 2**31)))
+
     with torch.no_grad():
                     
         # Load environment
         try: env = gym.make(environment, verbose = 0)
         except: env = gym.make(environment)
+
+        if obs_noise == True:
+            ## We have 4 types of action depending on the env, in hold_last we keep the last action, in force we force a specific action
+            ## in flip we flipbits and mask we change some actions to others based on a dictionary
+            env = ActionPerturbationWrapper(env, A=80, B=110,  mode="mask", mask_dict={2:0}) 
+
+        env = RecordVideo(env, video_folder = "Videos", episode_trigger = lambda episode_id: True, name_prefix= environment)
                         
         if environment[-12:-6] == 'Bullet' and render:
             env.render()  # bullet envs            
@@ -123,6 +137,7 @@ def evaluate_hebb(hebb_rule : str, environment : str, init_weights = 'uni', rend
 
         neg_count = 0
         rew_ep = 0
+        rewards_dynamic = []
         t = 0
         while True:
             
@@ -172,6 +187,10 @@ def evaluate_hebb(hebb_rule : str, environment : str, init_weights = 'uni', rend
                 if done:
                     break
             t += 1
+
+            if environment == 'LunarLander-v2':
+                #change of gravity 
+                env.unwrapped.world.gravity = (0.0, -1.62) 
             
             #### Episodic/Intra-life hebbian update of the weights
             if hebb_rule == 'A': 
@@ -195,16 +214,24 @@ def evaluate_hebb(hebb_rule : str, environment : str, init_weights = 'uni', rend
             else:
                 raise ValueError('The provided Hebbian rule is not valid')
 
-
+            angle = observation[2]   # pole angle for CartPole env
             # Normalise weights per layer
             if normalised_weights == True:
                 (a, b, c) = (0, 1, 2) if not pixel_env else (2, 3, 4)
                 list(p.parameters())[a].data /= list(p.parameters())[a].__abs__().max()
                 list(p.parameters())[b].data /= list(p.parameters())[b].__abs__().max()
                 list(p.parameters())[c].data /= list(p.parameters())[c].__abs__().max()
+
+            
+            if environment == "CartPole-v0":
+                rewards_dynamic.append(-abs(angle))
+            else:
+                rewards_dynamic.append(rew_ep)
             
         env.close()
         
+        fname = f"Rewards_{environment}_{hebb_rule}_pert{obs_noise}.npy"
+        np.save(fname, np.array(rewards_dynamic))
         print('\n Episode cumulative rewards ', int(rew_ep))
 
     
@@ -218,6 +245,8 @@ def main(argv):
     parser.add_argument('--init_weights', type=str,  default = 'uni', metavar='', help='Weight initilisation distribution used to sample from at each episode: uni, normal, default, xa_uni, sparse, ka_uni')
     parser.add_argument('--path_hebb', type=str,  default = None, metavar='', help='path to the evolved Hebbian coefficients')
     parser.add_argument('--path_coev', type=str,  default = None, metavar='', help='path to the evolved CNN parameters or the coevolve initial weights')
+    parser.add_argument("--obs_noise", action="store_true", help="Enable observation noise during evaluation")
+
 
     args = parser.parse_args()
 
@@ -227,7 +256,7 @@ def main(argv):
     render = True
     
     # Run the environment
-    evaluate_hebb(args.hebb_rule, args.environment, args.init_weights, render, hebb_coeffs, coevolved_or_cnn_parameters)
+    evaluate_hebb(args.hebb_rule, args.environment, args.init_weights, args.obs_noise, render, hebb_coeffs, coevolved_or_cnn_parameters)
     
 if __name__ == '__main__':
     main(sys.argv)
